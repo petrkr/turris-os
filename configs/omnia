@@ -81,5 +81,5 @@ CONFIG_PACKAGE_luajit=y
 CONFIG_PACKAGE_libgnutls=y
 
 # tor
-CONFIG_PACKAGE_obfsproxy=y
-CONFIG_PACKAGE_arm=y
+#CONFIG_PACKAGE_obfsproxy=y
+#CONFIG_PACKAGE_arm=y
