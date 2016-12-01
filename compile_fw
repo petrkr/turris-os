@@ -9,27 +9,32 @@
 [ -d ./logs-nor ] && rm -rf ./logs-nor
 [ -d ./logs-initram ] && rm -rf ./logs-initram
 
-export TMPDIR="`pwd`/tmp"
+export TMPDIR="$PWD/tmp"
 mkdir $TMPDIR
+
+if [ "$1" = turris ] || [ "$1" = omnia ]; then
+    export TARGET_BOARD="$1"
+    shift
+else
+    echo "The first argument is empty or unknown!"
+    echo "You have to specify target board - options are 'turris' or 'omnia'"
+    exit 1
+fi
 
 make_defconfig() {
 	make defconfig "$@"
 	egrep '^(#[[:space:]]+)?CONFIG_KERNEL' configs/common configs/$TARGET_BOARD | sed 's|.*:||' >> ./.config
+	if [ -n "${PKG_BRANCH}" ] && [ "${PKG_BRANCH}" \!= master ] && [ "${PKG_BRANCH}" \!= stable ] && [ "${PKG_BRANCH}" \!= stable-omnia ]; then
+		echo CONFIG_PACKAGE_cznic-repo-keys-test=y >> .config
+		echo CONFIG_PACKAGE_getbranch-test=y >> .config
+	else
+		echo CONFIG_PACKAGE_cznic-repo-keys-test=m >> .config
+		echo CONFIG_PACKAGE_getbranch-deploy=y >> .config
+	fi
 }
 
-if [ "$1" = turris ] || [ "$1" = omnia ]; then
-	export TARGET_BOARD="$1"
-	shift
-fi
-
-if [ -z "$TARGET_BOARD" ]; then
-	echo "You have to specify target board - options are 'turris' or 'omnia'"
-	exit 1
-fi
 # Clean feeds
 ./scripts/feeds clean
-
-# Install luci feed
 ./scripts/feeds update -a
 # Patch feeds
 pushd patches
@@ -46,18 +51,13 @@ popd
 ./scripts/feeds install -a
 
 # Uninstall broken pkgs
-[ \! -f ./disabled_packages.common ]        || ./scripts/feeds uninstall $(echo $(cut -d '#' -f1 ./disabled_packages.common))
-[ \! -f ./disabled_packages.$TARGET_BOARD ] || ./scripts/feeds uninstall $(echo $(cut -d '#' -f1 ./disabled_packages.$TARGET_BOARD))
+./scripts/feeds uninstall \
+$([ \! -f ./disabled_packages.common ] || echo $(cut -d '#' -f1 ./disabled_packages.common)) \
+$([ \! -f ./disabled_packages.$TARGET_BOARD ] || echo $(cut -d '#' -f1 ./disabled_packages.$TARGET_BOARD))
 
-# Bump release numbers when asked for
-while read pkg orig_release release; do
-	if [ $orig_release = X ]; then
-		sed -i 's|^PKG_RELEASE\(:\?\)=\$(PKG_SOURCE_VERSION)$|PKG_RELEASE\1=\$(PKG_SOURCE_VERSION)-'"$release"'|' "$pkg"/Makefile || true
-	else
-		sed -i 's|^PKG_RELEASE\(:\?\)='"$orig_release"'\+$|PKG_RELEASE\1='"$release"'|' "$pkg"/Makefile || true
-		sed -i 's|^PKG_RELEASE\(:\?\)=\$(PKG_SOURCE_VERSION)-'"$orig_release"'\+$|PKG_RELEASE\1=\$(PKG_SOURCE_VERSION)-'"$release"'|' "$pkg"/Makefile || true
-	fi
-done < release-override
+
+# Override packages release numbers
+scripts/override_release_numbers.sh
 
 # Build NAND FW
 [ -z "$OPENWRT_BRANCH"  ] || PKG_BRANCH="-$OPENWRT_BRANCH"
@@ -94,14 +94,6 @@ Install 'userlists' { critical = true }
 
 -- Install everything that was in the image
 EOF
-if [ -n "${PKG_BRANCH}" ] && [ "${PKG_BRANCH}" \!= master ] && [ "${PKG_BRANCH}" \!= stable ] && [ "${PKG_BRANCH}" \!= stable-omnia ]; then
-	echo 'Install "cznic-repo-keys-test"' >> base.lua
-	echo CONFIG_PACKAGE_cznic-repo-keys-test=y >> .config
-	echo CONFIG_PACKAGE_getbranch-test=y >> .config
-else
-	echo CONFIG_PACKAGE_cznic-repo-keys-test=m >> .config
-	echo CONFIG_PACKAGE_getbranch-deploy=y >> .config
-fi
 # Other lists
 echo 'config pkglists pkglists' > package/feeds/turrispackages/opkg-trans/files/updater.config
 for i in lists/*.list; do
@@ -126,56 +118,43 @@ for i in lists/*.list; do
 done
 
 [ -n "$USE_CCACHE" ] && echo "CONFIG_CCACHE=y" >> .config
+
+
 if [ -f "$HOME"/mime.key ]; then
 	echo "CONFIG_SIGNED_PACKAGES=y" >> .config
 	rm -f key-build key-build.pub
 	cp "$HOME/mime.key" key-build
 	cp "$HOME/mime.pub" key-build.pub
 fi
+
+
 [ "${TARGET_BOARD}" = omnia ] || echo "CONFIG_PACKAGE_updater-ng=m" >> ./.config
+
 make_defconfig
+
 if [ -d .git ] ; then
 	git log -n1 --format='%H' >files/etc/git-version
 fi
+
 make clean
+
 [ -z "$BUILD_ALL" ] || make dirclean
+
 set -- "$@" PKG_BRANCH=${PKG_BRANCH/-/}
+
 [ -z "$PERSISTENT_CCACHE" ] || set -- "$@" CCACHE_DIR="`pwd`/ccache" CCACHE_HOST_DIR="`pwd`/ccache-host"
+
 make "$@"
+
 # Nice junit export
-mkdir -p logs
-cat > logs/junit.xml << EOF
-<?xml version='1.0' encoding='utf-8'?>
-<testsuites errors='`cat logs/package/error.txt | wc -l`' tests='`find logs/package/ -name compile.txt | wc -l`'>
-EOF
-(cd logs; find package/ -name compile.txt; cd ..) | while read log; do
-PKG_NAME="`dirname $log`"
-if grep "ERROR: $PKG_NAME failed" logs/package/error.txt; then
-cat >> logs/junit.xml << EOF
-<testsuite errors='1' name='$PKG_NAME' tests='1'>
-<testcase name='compile'>
-<error message='$PKG_NAME failed to compile' type='error'><![CDATA[
-`tail -n 100 logs/$log | sed -e 's|\]\]>|\]\] >|g' -e 's/\x1b//g'`
-]]></error>
-</testcase>
-</testsuite>
-EOF
-else
-cat >> logs/junit.xml << EOF
-<testsuite errors='0' failures='0' name='$PKG_NAME' tests='1'>
-<testcase name='compile'/>
-</testsuite>
-EOF
-fi
-done
-cat >> logs/junit.xml << EOF
-</testsuites>
-EOF
+./scripts/generate_junit.sh
+
 if [ -n "`cat logs/package/error.txt 2> /dev/null`" ] && [ -z "$PKG_BRANCH" ]; then
 	echo "Following packages are failing in stable release"
 	cat logs/package/error.txt
 	exit 1
 fi
+
 [ \! -d ./logs ] || mv ./logs ./logs-nand
 
 COMMIT_DATE="`git log --format=format:%cD -1`"
@@ -249,15 +228,17 @@ echo Install $(sed -n 's|Package: \(.*\)|"\1"|p' $OPKG_STATUS | egrep -v '"updat
 [ \! -f "lists/base_add.$TARGET_BOARD" ] || echo Install $(cat "lists/base_add.$TARGET_BOARD" | sed 's|^\([^#]\+\)$|"\1"|') " { critical = true }" >> base.lua
 mv base.lua $PUB_BIN_DIR/lists
 for i in lists/*.list; do
-	[ "$i" = lists/base.list ] || rm -f $PUB_BIN_DIR/lists/$(basename $i .list).lua
-	echo -n "Install" >> $PUB_BIN_DIR/lists/$(basename $i .list).lua
+	LUA="$(basename $i .list).lua"
+	[ "$i" = lists/base.list ] || echo 'if features and features.provides then' > $PUB_BIN_DIR/lists/"$LUA"
+	echo -n "  Install" >> $PUB_BIN_DIR/lists/"$LUA"
 	grep -h -v CONFIG_ "$i" "${i/%list/${TARGET_BOARD}}" 2> /dev/null | grep . | grep -v '^#' | while read pkg; do
-		echo -n " \"$pkg\"" >> $PUB_BIN_DIR/lists/$(basename $i .list).lua
+		echo -n " \"$pkg\"" >> $PUB_BIN_DIR/lists/"$LUA"
 	done
-	echo " { ignore = { 'missing' } }" >> $PUB_BIN_DIR/lists/$(basename $i .list).lua
-	sed -i '/^Install[[:blank:]]*$/ d' $PUB_BIN_DIR/lists/$(basename $i .list).lua
+	echo " { ignore = { 'missing' } }" >> $PUB_BIN_DIR/lists/"$LUA"
+	sed -i '/^  Install[[:blank:]]*$/ d' $PUB_BIN_DIR/lists/"$LUA"
+	[ "$i" = lists/base.list ] || echo 'end' >> $PUB_BIN_DIR/lists/"$LUA"
 	if [ -f "$HOME"/mime.key ]; then
-		staging_dir/host/bin/usign -S -m $PUB_BIN_DIR/lists/$(basename $i .list).lua -s "$HOME"/mime.key
+		staging_dir/host/bin/usign -S -m $PUB_BIN_DIR/lists/"$LUA" -s "$HOME"/mime.key
 	fi
 done
 for i in lists/*.lua; do
@@ -271,7 +252,9 @@ done
 if [ "$TARGET_BOARD" = "omnia" ]; then
 	rm -f $PUB_BIN_DIR/*.ext4 $PUB_BIN_DIR/*sums
 	for i in $PUB_BIN_DIR/medkit/*.tar.gz; do
-		staging_dir/host/bin/usign -S -m "$i" -s "$HOME"/mime.key
+		if [ -f "$HOME"/mime.key ]; then
+			staging_dir/host/bin/usign -S -m "$i" -s "$HOME"/mime.key
+		fi
 		pushd "`dirname $i`"
 		md5sum "`basename $i`" > "`basename $i`".md5
 		sha256sum "`basename $i`" > "`basename $i`".sha256
@@ -290,6 +273,7 @@ if [ "$TARGET_BOARD" = turris ]; then
 	[ -d ./bin/mpc85xx/packages ] && rm -rf ./bin/mpc85xx/packages
 	[ -d ./bin-nor ] && rm -rf ./bin-nor
 	mv ./bin ./bin-nor
+
 elif [ "$TARGET_BOARD" = omnia ]; then
 	cp configs/config-omnia-rescue .config
 	[ -n "$USE_CCACHE" ] && echo "CONFIG_CCACHE=y" >> .config
@@ -309,7 +293,12 @@ elif [ "$TARGET_BOARD" = omnia ]; then
 	cat build_dir/target-arm_cortex-a9+vfpv3_musl-*_eabi/linux-mvebu/linux-4.4*/arch/arm/boot/dts/armada-385-turris-omnia.dtb >> `ls -d build_dir/target-arm_cortex-a9+vfpv3_musl-*_eabi/linux-mvebu`/zImage-initramfs-armada-385-turris-omnia
 	[ \! -d ./logs ] || mv ./logs ./logs-initram
 	cp build_dir/target-arm_*/linux-mvebu/zImage-initramfs-armada-385-turris-omnia bin/mvebu-musl/omnia-initramfs-zimage
-	[ "`du -b bin/mvebu-musl/omnia-initramfs-zimage | sed 's|[[:blank:]].*||'`" -lt 7000000 ] || exit 1
+	SIZE="`du -b bin/mvebu-musl/omnia-initramfs-zimage | sed 's|[[:blank:]].*||'`"
+	echo "Rescue image size is ${SIZE}."
+	if [ "$SIZE" -ge $(( 7 * 1024 * 1024 )) ]; then
+		echo FATAL: Image too big.
+		exit 1
+	fi
 	mv build_dir/uboot* bin/mvebu-musl
 	mkdir -p bin/mvebu-musl/x86-64
 	cp build_dir/host/uboot-turris-omnia*/turris-omnia-uboot/* bin/mvebu-musl/x86-64

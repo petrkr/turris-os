@@ -21,7 +21,7 @@ index 0df1460..b859ca7 100644
  PKG_NAME:=lxc
  PKG_VERSION:=1.1.5
 -PKG_RELEASE:=3
-+PKG_RELEASE:=7
++PKG_RELEASE:=8
  
  PKG_LICENSE:=LGPL-2.1+ BSD-2-Clause GPL-2.0
  PKG_MAINTAINER:=Luka Perkov <luka@openwrt.org>
@@ -39,7 +39,7 @@ index 0df1460..b859ca7 100644
 +define Package/lxc-common/postinst
 +#!/bin/sh
 +[ -n "$$IPKG_INSTROOT" ] || {
-+	if cd /lxc; then
++	if cd /lxc 2> /dev/null; then
 +		for i in *; do
 +			if [ -d "$$i" ] && [ \! -e "/srv/lxc/$$i" ]; then
 +				ln -s "../../lxc/$$i" "/srv/lxc/$$i"
@@ -141,12 +141,12 @@ new file mode 100644
 index 0000000..b2bedb3
 --- /dev/null
 +++ b/utils/lxc/patches/040-better-default.patch
-@@ -0,0 +1,14 @@
+@@ -0,0 +1,16 @@
 +Index: lxc-1.1.5/config/etc/default.conf.unknown
 +===================================================================
 +--- lxc-1.1.5.orig/config/etc/default.conf.unknown
 ++++ lxc-1.1.5/config/etc/default.conf.unknown
-+@@ -1 +1,8 @@
++@@ -1 +1,10 @@
 +-lxc.network.type = empty
 ++lxc.network.type = veth
 ++lxc.network.link = br-lan
@@ -156,6 +156,8 @@ index 0000000..b2bedb3
 ++lxc.network.script.up = /usr/share/lxc/hooks/tx-off
 ++lxc.tty = 4
 ++lxc.pts = 1024
+++# Template to generate fixed MAC address
+++lxc.network.hwaddr = x2:xx:xx:xx:xx:xx
 diff --git a/utils/lxc/patches/050-tx-off.patch b/utils/lxc/patches/050-tx-off.patch
 new file mode 100644
 index 0000000..62d15e8
@@ -196,6 +198,23 @@ index 0000000..62d15e8
 +@@ -0,0 +1,2 @@
 ++#!/bin/sh
 ++[ -z "$5" ] || ethtool -K "$5" tx off
+diff --git a/utils/lxc/files/lxc-auto.config b/utils/lxc/files/lxc-auto.config
+index 5572c73..b0e90f7 100644
+--- a/utils/lxc/files/lxc-auto.config	2016-11-18 11:16:17.152468041 +0100
++++ b/utils/lxc/files/lxc-auto.config	2016-11-18 11:36:50.829639903 +0100
+@@ -1,5 +1,12 @@
+ #config container
+ 	#option name container1
+-	#option timeout 300
++	# How long to give container to shutdown gracefully before killing it
++	# Default 300s
++	#option timeout 30
++	# Commnads to run before starting container
+ 	#list command '/bin/command --option'
+ 
++#config container
++	#option name container2
++	#option timeout 60
++
 -- 
 2.10.1
-
