@@ -1,3 +1,5 @@
+* ath10k: use ath10k again as default instead of ath10k-ct
+* mac80211: Backport a few more patches from LEDE
 * python-bottle: Update to 0.12.11 (fixes CVE-2016-9964; Foris was not affected)
 ===================== 3.4 =======================
 * printing: Proof of concept of CUPS integration
