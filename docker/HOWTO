@@ -1,0 +1,19 @@
+BUILD:
+
+In root dir:
+------------
+cd docker
+docker build --no-cache -t turris-os-build .
+
+RUN build:
+
+In root dir:
+------------
+
+./docker/rundocker.sh
+
+In docker:
+----------
+cd turris-os
+./compile_omnia_fw -j8
+
